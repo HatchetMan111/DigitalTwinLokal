@@ -66,6 +66,12 @@ systemd-Service, Demo-Dorf sofort live):
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/DigitalTwinLokal/main/install/digitaltwinlokal.sh)"
 ```
 
+Der Installer **fragt interaktiv nach dem Gebiet** (Dorf-/Ortsname + Radius, leer
+= nur Demo). Wer es scriptgesteuert bevorzugt, übergibt das Gebiet direkt per
+Flag — beide Wege enden im gleichen Ergebnis: Nach dem Bau ist das Dorf im
+Dorfregal als **3D- und 2D-Karte** erreichbar, vollautomatisch aus offenen
+Geodaten gebaut.
+
 Danach gilt: `http://<CT-IP>:8000/` = **Dorfregal** (Übersicht aller Dörfer) und
 je Dorf `<dorf>/` = 3D-Ansicht, `<dorf>/karte.html` = **2D-Karte**. Im Heimnetz
 kann jedes Gerät von oben aufs Dorf schauen – komplett lokal, ohne Cloud.

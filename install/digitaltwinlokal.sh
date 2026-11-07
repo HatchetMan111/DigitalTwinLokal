@@ -1120,6 +1120,41 @@ create_container() {
     ok "Container $CT_ID erstellt ($CT_CORES vCPU, ${CT_MEMORY} MB RAM, ${CT_ROOTFS} GB Disk, onboot=1, unprivileged)"
 }
 
+# ── Interaktive Gebiets-Frage (wenn kein --dorf angegeben wurde) ───────────
+ask_for_area() {
+    # Nur fragen, wenn installiert werden soll und nichts vorgegeben ist
+    if [[ ${#DORFS[@]} -gt 0 || -n "$DORF_BBOX" || "$ASSUME_YES" == true \
+          || "$UPDATE" == true || "$UNINSTALL" == true || "$STATUS_CHECK" == true \
+          || "$LIST_ONLY" == true || -n "$EXPORT_SLUG" || -n "$REMOVE_DORF" ]]; then
+        return 0
+    fi
+    # Ohne TTY (z. B. wget … | bash) keine Frage stellen – dann Demo-Installation
+    if ! [[ -t 0 ]] && [[ "${DT_FORCE_ASK:-0}" != "1" ]]; then
+        return 0
+    fi
+
+    header "Dein Gebiet"
+    echo -e "  Du kannst jetzt direkt dein ${BOLD}Heimatdorf${NC} bauen lassen"
+    echo -e "  (OSM-Gebäude/Straßen + Höhenmodell + Luftbild – alles automatisch, alles lokal):"
+    echo ""
+    local reply_name reply_radius
+    read -r -p "  Dorf- oder Ortsname (leer = nur Demo-Dorf installieren): " reply_name || reply_name=""
+    if [[ -z "$reply_name" ]]; then
+        info "Nur Demo installieren – Dörfer später hinzufügen mit:  --dorf \"Dein Dorf\""
+        return 0
+    fi
+    read -r -p "  Halbbreite des Ausschnitts in Metern [1500]: " reply_radius || reply_radius="1500"
+    if ! [[ "$reply_radius" =~ ^[0-9]+$ ]]; then
+        warn "Ungültige Zahl ('$reply_radius') – verwende 1500 m"
+        reply_radius=1500
+    fi
+    DORF_RADIUS="$reply_radius"
+    DORFS+=("$reply_name")
+    ok "Gebiet '$reply_name' (±${DORF_RADIUS} m) wird nach der Installation gebaut."
+    info "Titel/Attribution/Quelle per --title/--attribution/--tiles feinjustierbar (--help)."
+    return 0
+}
+
 # ── Hauptprogramm ──────────────────────────────────────────────────────────
 main() {
     parse_args "$@"
@@ -1132,6 +1167,7 @@ main() {
     echo ""
 
     check_prerequisites
+    ask_for_area
 
     # Bestehenden Container anhand Hostname finden (ID-Vorgabe hat Vorrang)
     local existing_id=""
