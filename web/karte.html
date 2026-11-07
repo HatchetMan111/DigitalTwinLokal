@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>2D-Karte</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23eee7d7'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%238d4a34' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='2.5' fill='%238d4a34'/%3E%3C/svg%3E">
+<style>
+:root { --paper:#eee7d7; --ink:#3d3527; --accent:#8d4a34; }
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { height:100%; overflow:hidden; background:var(--paper);
+  font-family:'Segoe UI',system-ui,-apple-system,sans-serif; color:var(--ink); }
+#karte { position:fixed; inset:0; width:100%; height:100%; touch-action:none; cursor:grab; }
+#karte.drag { cursor:grabbing; }
+
+.hud-title { position:fixed; top:14px; left:16px; max-width:70vw; pointer-events:none; }
+.hud-title .eyebrow { font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+  opacity:.62; font-weight:600; }
+.hud-title h1 { font-size:clamp(20px,3.2vw,30px); line-height:1.15;
+  text-shadow:0 1px 0 rgba(255,255,255,.7); }
+.hud-title .sub { font-size:13px; opacity:.72; margin-top:2px; }
+
+.hud-zoom { position:fixed; top:14px; right:14px; display:flex; flex-direction:column; gap:8px; z-index:5; }
+.hud-zoom button, .hud-link a { width:42px; height:42px; border:1px solid rgba(61,53,39,.22);
+  border-radius:10px; background:rgba(255,252,244,.92); color:var(--ink); font-size:19px;
+  line-height:1; display:flex; align-items:center; justify-content:center;
+  text-decoration:none; cursor:pointer; box-shadow:0 2px 8px rgba(60,45,25,.14);
+  backdrop-filter:blur(3px); }
+.hud-zoom button:hover, .hud-link a:hover { background:#fffdf7; }
+.hud-zoom button:active { transform:scale(.94); }
+.hud-link a { font-size:11px; font-weight:700; letter-spacing:.02em; }
+
+.hud-hint { position:fixed; bottom:14px; left:50%; transform:translateX(-50%);
+  font-size:12px; opacity:.6; white-space:nowrap; pointer-events:none;
+  padding:0 12px; }
+.hud-attr { position:fixed; bottom:12px; right:14px; font-size:10.5px; opacity:.55;
+  max-width:44vw; text-align:right; pointer-events:none; }
+
+#scalebar { position:fixed; bottom:40px; left:16px; font-size:11.5px; opacity:.8; pointer-events:none; }
+#scalebar .bar { height:4px; background:var(--ink); border-radius:2px; position:relative;
+  margin-top:3px; }
+#scalebar .bar::before, #scalebar .bar::after { content:''; position:absolute; width:2px;
+  height:9px; background:var(--ink); top:-2.5px; }
+#scalebar .bar::after { right:0; }
+#nord { position:fixed; top:64px; right:14px; width:42px; text-align:center;
+  font-weight:700; font-size:12px; opacity:.75; pointer-events:none; }
+#nord::after { content:''; display:block; width:0; height:0; margin:3px auto 0;
+  border-left:6px solid transparent; border-right:6px solid transparent;
+  border-bottom:16px solid var(--ink); }
+
+#err { position:fixed; inset:0; display:none; place-items:center; text-align:center;
+  padding:24px; font-size:15px; background:var(--paper); z-index:10; }
+@media (max-width:600px){ .hud-hint{ display:none; } .hud-link a{ width:38px; height:38px; } }
+</style>
+</head>
+<body>
+<canvas id="karte"></canvas>
+
+<header class="hud-title">
+  <div class="eyebrow" id="mapEyebrow">2D-Karte</div>
+  <h1 id="mapTitle">2D-Karte</h1>
+  <div class="sub" id="mapSub"></div>
+</header>
+
+<div class="hud-zoom">
+  <div class="hud-link"><a href="index.html" title="Zur 3D-Ansicht">3D</a></div>
+  <button id="zin" type="button" aria-label="Hineinzoomen">+</button>
+  <button id="zout" type="button" aria-label="Herauszoomen">−</button>
+  <button id="zfit" type="button" aria-label="Gesamtansicht">◻</button>
+</div>
+<div id="nord">N</div>
+
+<p class="hud-hint">Ziehen zum Verschieben · Scrollen oder Pinch zum Zoomen · Doppelklick zoomt</p>
+<p class="hud-attr" id="mapAttr"></p>
+<div id="scalebar"><span id="scaletext"></span><div class="bar" id="scalebar-el" style="width:80px"></div></div>
+<div id="err"><div id="errmsg">Kartendaten nicht gefunden.<br>Diese Seite gehört in ein Dorf-Verzeichnis mit <code>data/</code>.</div></div>
+
+<script src="data/buildings.js"></script>
+<script src="data/roads.js"></script>
+<script src="data/places.js"></script>
+<script>
+'use strict';
+/* 2D-Draufsicht zu iso.js: dieselben Daten, gleiche Farbwelt, Nord oben.
+   Kein Backend, keine Imports, kein Build – nur Canvas 2D.
+   Daten kommen als window.BUILDINGS / window.ROADS / window.PLACES. */
+
+const R = 6378137, D2R = Math.PI / 180;
+const cv = document.getElementById('karte');
+const ctx = cv.getContext('2d');
+
+/* ---------------- Farbwelt ( synchron mit iso.js ) ---------------- */
+const ROOF = {
+  church:'#4b5058', chapel:'#5a5350', school:'#7a4633', kindergarten:'#7a4633',
+  public:'#6b4535', civic:'#6b4535', hotel:'#7d4a36', apartments:'#7d4a36',
+  residential:'#8a4a34', house:'#8d4a34', yes:'#84492f', farm:'#7a4a34',
+  farm_auxiliary:'#6d4a35', barn:'#6a4a3a', stable:'#6d4a35',
+  warehouse:'#5d5a55', industrial:'#55524e', commercial:'#5d5a55',
+  retail:'#5d5a55', service:'#605c56', fire_station:'#8a4a34',
+  garage:'#5c5a56', garages:'#5c5a56', shed:'#5f4c3d', hut:'#5f4c3d',
+  roof:'#5f4c3d', carport:'#5f4c3d', greenhouse:'#bcd3c9',
+  silo:'#8f8a7d', water_tower:'#8f8a7d', transformer_tower:'#5c5a56'
+};
+const KEEP_ROOF = new Set(['church','chapel','industrial','warehouse','commercial',
+  'retail','service','silo','water_tower','greenhouse']);
+const ROOF_MIX = [['#8b4a33',34],['#7d4230',16],['#8f8a82',14],['#7b776f',12],
+  ['#6b4b3a',12],['#8f5138',8],['#6e7176',4]];
+const ROAD_W = { motorway:10, trunk:9, primary:9, secondary:8, tertiary:7,
+  unclassified:6, residential:6, living_street:5, service:4, track:3.2,
+  path:1.6, footway:1.6, cycleway:1.8, bridleway:2, steps:2.4, road:4 };
+const ROAD_C = { motorway:'#e7dbbd', trunk:'#e7dbbd', primary:'#e9dfc4',
+  secondary:'#ece2c9', tertiary:'#eee5cf', unclassified:'#efe6d2',
+  residential:'#f1e8d5', living_street:'#f1e8d6', service:'#e9dfc9',
+  track:'#d8c9a6', path:'#cdbf9c', footway:'#cdbf9c', cycleway:'#d2c5a3',
+  bridleway:'#d2c5a3', steps:'#d8ccb0', road:'#eee5cf' };
+const CASING = '#b3a17d';
+
+function hashStr(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
+  return h;
+}
+function roofColor(p) {
+  const base = ROOF[p.building];
+  if (base && (!p.building || KEEP_ROOF.has(p.building))) return base;
+  let h = hashStr(String(p.osm_id || 'x')) % 100, pick = ROOF_MIX[0][0];
+  for (const [c, w] of ROOF_MIX) { if (h < w) { pick = c; break; } h -= w; }
+  return pick;
+}
+
+/* ---------------- Projektion ( wie iso.js ) ---------------- */
+let K = 1;
+const mx = (lon) => lon * D2R * R * K;
+const my = (lat) => R * Math.log(Math.tan(Math.PI / 4 + lat * D2R / 2)) * K;
+
+/* ---------------- Daten + Zustand ---------------- */
+const S = { meta:null, bld:null, roads:[], places:[], ground:null,
+            bbox:null, cx:0, cy:0, ready:false };
+let view = { scale:1, tx:0, ty:0 };   /* Weltmeter → Bildschirm: x*scale+tx, -(y)*scale+ty */
+let rafPending = false;
+
+function drawLater(){
+  /* genau ein geplanter Frame; draw() zeichnet immer komplett neu */
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => { rafPending = false; draw(); });
+}
+
+/* ---------------- Kamera ---------------- */
+function fitView() {
+  if (!S.bbox || !cv.clientWidth || !cv.clientHeight) return;  /* noch nicht layoutet */
+  const b = S.bbox;
+  const x0 = mx(b.w) - S.cx, x1 = mx(b.e) - S.cx;
+  const y0 = my(b.s) - S.cy, y1 = my(b.n) - S.cy;
+  const pad = 40;
+  let sc = Math.min((cv.clientWidth - 2 * pad) / (x1 - x0),
+                    (cv.clientHeight - 2 * pad) / (y1 - y0));
+  if (!Number.isFinite(sc)) return;
+  view.scale = Math.max(0.02, Math.min(sc, 40));
+  view.tx = cv.clientWidth / 2 - (x0 + x1) / 2 * view.scale;
+  view.ty = cv.clientHeight / 2 + (y0 + y1) / 2 * view.scale;
+  drawLater();
+}
+const worldX = (lon) => (mx(lon) - S.cx) * view.scale + view.tx;
+const worldY = (lat) => -(my(lat) - S.cy) * view.scale + view.ty;
+function zoomAt(px, py, factor) {
+  const ns = Math.max(0.02, Math.min(60, view.scale * factor));
+  const f = ns / view.scale;
+  view.tx = px - (px - view.tx) * f;
+  view.ty = py - (py - view.ty) * f;
+  view.scale = ns;
+  drawLater();
+}
+
+/* ---------------- Eingabe ---------------- */
+let drag = null;
+cv.addEventListener('pointerdown', (e) => {
+  cv.setPointerCapture(e.pointerId);
+  drag = { x: e.clientX, y: e.clientY };
+  cv.classList.add('drag');
+});
+cv.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  view.tx += e.clientX - drag.x;
+  view.ty += e.clientY - drag.y;
+  drag = { x: e.clientX, y: e.clientY };
+  drawLater();
+});
+const endDrag = () => { drag = null; cv.classList.remove('drag'); };
+cv.addEventListener('pointerup', endDrag);
+cv.addEventListener('pointercancel', endDrag);
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  zoomAt(e.clientX, e.clientY, Math.pow(1.0022, -e.deltaY));
+}, { passive:false });
+cv.addEventListener('dblclick', (e) => {
+  e.preventDefault();
+  zoomAt(e.clientX, e.clientY, e.shiftKey ? 0.5 : 2);
+});
+/* Pinch-Zoom (2 Pointer) */
+const touches = new Map();
+cv.addEventListener('touchstart', (e) => { if (e.touches.length === 2) { endDrag();
+  for (const t of e.touches) touches.set(t.identifier, [t.clientX, t.clientY]); } }, { passive:true });
+cv.addEventListener('touchmove', (e) => {
+  if (e.touches.length !== 2 || touches.size !== 2) return;
+  e.preventDefault();
+  const pts = [...e.touches].map((t) => [t.clientX, t.clientY]);
+  const old = [...touches.values()];
+  const d0 = Math.hypot(old[0][0] - old[1][0], old[0][1] - old[1][1]);
+  const d1 = Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1]);
+  if (d0 > 0 && d1 > 0)
+    zoomAt((pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2, d1 / d0);
+  touches.clear();
+  for (const t of e.touches) touches.set(t.identifier, [t.clientX, t.clientY]);
+}, { passive:false });
+cv.addEventListener('touchend', () => touches.clear(), { passive:true });
+
+document.getElementById('zin').onclick = () => zoomAt(cv.clientWidth/2, cv.clientHeight/2, 1.6);
+document.getElementById('zout').onclick = () => zoomAt(cv.clientWidth/2, cv.clientHeight/2, 1/1.6);
+document.getElementById('zfit').onclick = fitView;
+
+/* ---------------- Zeichnen ---------------- */
+function drawGround() {
+  const b = S.bbox;
+  if (S.ground) {
+    ctx.drawImage(S.ground,
+      worldX(b.w) - 0.5, worldY(b.n) - 0.5,
+      worldX(b.e) - worldX(b.w) + 1, worldY(b.s) - worldY(b.n) + 1);
+  } else {
+    ctx.fillStyle = '#dfe3d0';
+    ctx.fillRect(worldX(b.w), worldY(b.n),
+                 worldX(b.e) - worldX(b.w), worldY(b.s) - worldY(b.n));
+  }
+}
+
+function drawRoads() {
+  for (const rd of S.roads) {
+    const w = Math.max(1, (ROAD_W[rd.t] || 3) * view.scale * 0.85);
+    for (const pass of [0, 1]) {  /* 0 = Casing, 1 = Deckfläche */
+      ctx.strokeStyle = pass ? (ROAD_C[rd.t] || ROAD_C.road) : CASING;
+      ctx.lineWidth = pass ? w : w + Math.max(1.2, view.scale * 1.2);
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      for (const run of rd.runs) {
+        ctx.beginPath();
+        for (let i = 0; i < run.length; i++) {
+          const x = worldX(run[i][1]), y = worldY(run[i][0]);
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+function drawBuildings() {
+  if (!S.bld) return;
+  ctx.lineWidth = Math.max(0.6, Math.min(1.2, view.scale * 0.35));
+  ctx.strokeStyle = 'rgba(72,58,44,.45)';
+  for (const f of S.bld.features) {
+    const polys = f.geometry.type === 'Polygon'
+      ? [f.geometry.coordinates] : f.geometry.coordinates;
+    ctx.fillStyle = roofColor(f.properties);
+    for (const poly of polys) {
+      const ring = poly[0];
+      if (!ring || ring.length < 3) continue;
+      ctx.beginPath();
+      for (let i = 0; i < ring.length; i++) {
+        const x = worldX(ring[i][0]), y = worldY(ring[i][1]);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+}
+
+function drawPlaces() {
+  if (view.scale < 1.4 && S.places.length > 6) return;  /* zu voll – Details erst nah */
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const p of S.places) {
+    const major = p.kind === 'village' || p.kind === 'town';
+    if (!major && view.scale < 1.4) continue;
+    ctx.font = (major ? '700 15px' : '600 12.5px') +
+      " 'Segoe UI',system-ui,sans-serif";
+    const x = worldX(p.lon), y = worldY(p.lat);
+    ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(255,252,244,.85)';
+    ctx.strokeText(p.name, x, y);
+    ctx.fillStyle = '#3d3527';
+    ctx.fillText(p.name, x, y);
+  }
+}
+
+function drawScaleBar() {
+  const target = 90;  /* px */
+  const meters = view.scale > 0 ? target / view.scale : 0;
+  const pow = Math.pow(10, Math.floor(Math.log10(Math.max(meters, 0.01))));
+  let nice = pow;
+  for (const m of [1, 2, 5, 10]) if (m * pow <= meters) nice = m * pow;
+  const px = nice * view.scale;
+  document.getElementById('scalebar-el').style.width = px.toFixed(0) + 'px';
+  document.getElementById('scaletext').textContent =
+    nice >= 1000 ? (nice / 1000) + ' km' : nice + ' m';
+}
+
+function draw() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#e5ddca';
+  ctx.fillRect(0, 0, w, h);
+  if (!S.ready) return;
+  drawGround();
+  drawRoads();
+  drawBuildings();
+  drawPlaces();
+  drawScaleBar();
+}
+
+/* ---------------- Start ---------------- */
+function showErr(msg) {
+  document.getElementById('err').style.display = 'grid';
+  if (msg) document.getElementById('errmsg').innerHTML = msg;
+}
+
+async function loadJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + ' → HTTP ' + r.status);
+  return r.json();
+}
+
+(async function init() {
+  try {
+    const meta = await loadJSON('data/scene/meta.json');
+    S.meta = meta;
+    S.bbox = meta;   /* {w,s,e,n,…} – direkt die Meta-Objekt-Felder nutzen */
+    K = Math.cos(((meta.s + meta.n) / 2) * D2R);
+    S.cx = (mx(meta.w) + mx(meta.e)) / 2;
+    S.cy = (my(meta.s) + my(meta.n)) / 2;
+    document.getElementById('mapEyebrow').textContent = meta.eyebrow || '2D-Karte';
+    document.getElementById('mapTitle').textContent = meta.title || '2D-Karte';
+    document.getElementById('mapSub').textContent = meta.subtitle || '';
+    document.getElementById('mapAttr').textContent = meta.attribution || '';
+    document.title = (meta.title || '2D-Karte') + ' – 2D';
+  } catch (e) { showErr(); console.error(e); return; }
+
+  /* Globale aus den <script>-Tags (fehlende Dateien sind ok – leere Karte) */
+  S.roads = window.ROADS || [];
+  S.places = window.PLACES || [];
+  S.bld = window.BUILDINGS || null;
+
+  /* Straßenzüge vorbereiten (Nord oben, Canvas clippt selbst) */
+  for (const rd of S.roads) rd.runs = (rd.p || []).length ? [rd.p] : [];
+  if (S.ground === null) {
+    const img = new Image();
+    img.onload = () => { S.ground = img; drawLater(); };
+    img.onerror = () => { S.ground = false; drawLater(); };
+    img.src = 'data/scene/ground.jpg';
+  }
+  S.ready = true;
+  fitView();
+  window.addEventListener('resize', () => { fitView(); });
+})();
+</script>
+</body>
+</html>
