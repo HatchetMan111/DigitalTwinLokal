@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Isometrische Karte</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23eee7d7'/%3E%3Cpath d='M16 5 27 11v10L16 27 5 21V11z' fill='%238d4a34'/%3E%3Cpath d='M16 5 27 11 16 17 5 11z' fill='%23b5613f'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="iso.css?v=1">
+</head>
+<body>
+<div id="map3d"></div>
+
+<header class="hud-title">
+  <div class="eyebrow" id="mapEyebrow">Isometrische Karte</div>
+  <h1 id="mapTitle">Isometrische Karte</h1>
+  <div class="sub" id="mapSub"></div>
+</header>
+
+<div class="hud-zoom">
+  <button id="zin" type="button" aria-label="Hineinzoomen">+</button>
+  <button id="zout" type="button" aria-label="Herauszoomen">−</button>
+  <button id="zfit" type="button" aria-label="Gesamtansicht">◻</button>
+</div>
+
+<p class="hud-hint">Ziehen zum Verschieben · Scrollen oder Pinch zum Zoomen · Doppelklick zoomt</p>
+<p class="hud-attr" id="mapAttr">© OpenStreetMap-Mitwirkende</p>
+
+<script src="data/buildings.js"></script>
+<script src="data/lod2.js" onerror="window.LOD2=window.LOD2||{b:[]}"></script>
+<script src="data/roads.js"></script>
+<script src="data/places.js"></script>
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.js"}}</script>
+<script type="module" src="iso.js?v=1"></script>
+</body>
+</html>

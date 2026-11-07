@@ -1,0 +1,13 @@
+# echte Geodaten bleiben lokal (nicht veröffentlichen)
+web/data/bbox.json
+data/lod2/
+*.gml
+*.tif
+*.tiff
+*.dgm
+
+# Build-/Systemdateien
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/

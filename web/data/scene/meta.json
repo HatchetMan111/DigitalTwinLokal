@@ -1,0 +1,19 @@
+{
+  "w": 11.498,
+  "s": 48.098,
+  "e": 11.532,
+  "n": 48.122,
+  "img": [
+    1500,
+    1586
+  ],
+  "title": "Musterhausen",
+  "subtitle": "Beispielweiler · Waldhagen · frei erfundene Demo",
+  "eyebrow": "Isometrische Karte",
+  "attribution": "Demo · alle Geometrien und Namen frei erfunden · keine realen Daten",
+  "focus": {
+    "lat": 48.11,
+    "lon": 11.515,
+    "radius": 300
+  }
+}

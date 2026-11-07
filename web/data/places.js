@@ -1,0 +1,1 @@
+window.PLACES=[{"name":"Musterhausen","kind":"village","lat":48.11,"lon":11.515},{"name":"Beispielweiler","kind":"hamlet","lat":48.1042505,"lon":11.5039679},{"name":"Waldhagen","kind":"hamlet","lat":48.1162878,"lon":11.5252249}];
