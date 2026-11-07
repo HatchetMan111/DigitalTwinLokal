@@ -54,6 +54,51 @@ reale Geodatenquelle**. Damit ist das Repository vollständig anonym.
 
 ---
 
+---
+
+## Proxmox: Als LXC hosten (Einzeiler)
+
+Auf einem Proxmox-VE-Host (als root) installiert ein Einzeiler das Projekt als
+unprivilegierten LXC-Container (2 vCPU, 2 GB RAM, 8 GB Disk, Port 8000, `onboot`,
+systemd-Service, Demo-Dorf sofort live):
+
+```bash
+bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/DigitalTwinLokal/main/install/digitaltwinlokal.sh)"
+```
+
+Danach gilt: `http://<CT-IP>:8000/` = **Dorfregal** (Übersicht aller Dörfer) und
+je Dorf `<dorf>/` = 3D-Ansicht, `<dorf>/karte.html` = **2D-Karte**. Im Heimnetz
+kann jedes Gerät von oben aufs Dorf schauen – komplett lokal, ohne Cloud.
+
+### Use Cases
+
+| Befehl (auf dem Proxmox-Host) | Was passiert |
+|---|---|
+| *(Einzeiler oben)* | CT erstellen + Demo-Dorf „Musterhausen“ hosten |
+| `…digitaltwinlokal.sh --dorf "Dein Dorf"` | **Echtes Heimatdorf vollautomatisch erstellen**: OSM-Gebäude/Straßen (Overpass), Höhenmodell (AWS-Terrarium-Kacheln z13), Luftbild (Esri World Imagery z16), gemalter Boden – landet direkt im Dorfregal |
+| `… --dorf "Dein Dorf" --radius 2000` | Größerer Ausschnitt; `--bbox w,s,e,n` wählt die Region exakt |
+| `… --dorf "Nachbardorf"` | Weitere Dörfer hinzufügen (beliebig oft, alles im Regal) |
+| `… --list` | Gehostete Dörfer mit URLs auflisten |
+| `… --export "Dein Dorf" --out /root/dorf.tar.gz` | Dorf als tar.gz auf den Host sichern |
+| `… --remove-dorf "Dein Dorf"` | Dorf aus dem Container entfernen |
+| `… --update` | App-Code aktualisieren (Dorf-Daten bleiben erhalten) |
+| `… --status` | Service, Dörfer und Erreichbarkeit prüfen |
+| `… --uninstall` | Container vollständig entfernen |
+
+Container-Feinsteuerung: `--id`, `--hostname`, `--storage`, `--rootfs`, `--cores`,
+`--memory`, `--ip`, `--port`, `--tiles` (eigene Kachelquelle, z. B. Bayern-Orthofotos),
+`--z`, `--title`, `--subtitle`, `--attribution`, `--debug` (vollständiges `bash -x`-Log).
+Bei Fehlern gibt das Script die komplette Fehlerkette inkl. Container-Logs aus;
+ein vollständiges Installationslog liegt unter `/tmp/digitaltwin-installer-*.log`.
+
+Hinweise: Beim Dorf-Bau lädt der Container **einmalig** OSM-, Höhen- und
+Luftbilddaten aus dem Internet (Overpass/AWS/Esri); die fertige Web-UI läuft danach
+komplett lokal. Echte Ortsdaten bleiben ausschließlich im Container – nichts davon
+landet in diesem öffentlichen Repo. Die Attribution ist vorbelegt und erscheint
+sichtbar in jeder Karte.
+
+---
+
 ## Eigenes Dorf bauen
 
 Der Ablauf ist für Mensch und KI-Agent identisch. Details und Dateiformate stehen in
