@@ -47,6 +47,7 @@ CT_TEMPLATE=""
 DORFS=()                   # Array der Dorfnamen aus --dorf
 DORF_ZIP=""                # Postleitzahl – macht die Ortssuche eindeutig
 DORF_COUNTRY="de"          # ISO-Ländercode für die PLZ-Suche
+DORF_LOD2=""               # Verzeichnis mit LoD2-CityGML (.gml) für echte Dächer
 DORF_RADIUS=1500           # Halbbreite in Metern
 DORF_BBOX=""               # optional w,s,e,n statt Ortsname
 ORTHO_TILES="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -147,6 +148,7 @@ parse_args() {
             --dorf)           DORFS+=("${args[1]}"); args=("${args[@]:2}") ;;
             --zip)            DORF_ZIP="${args[1]}"; args=("${args[@]:2}") ;;
             --country)        DORF_COUNTRY="${args[1]}"; args=("${args[@]:2}") ;;
+            --lod2)           DORF_LOD2="${args[1]}"; args=("${args[@]:2}") ;;
             --radius)         DORF_RADIUS="${args[1]}"; args=("${args[@]:2}") ;;
             --bbox)           DORF_BBOX="${args[1]}"; args=("${args[@]:2}") ;;
             --tiles)          ORTHO_TILES="${args[1]}"; args=("${args[@]:2}") ;;
@@ -192,6 +194,12 @@ parse_args() {
     [[ "$CT_ROOTFS" =~ ^[0-9]+$ ]] || die "--rootfs muss eine Zahl sein: '$CT_ROOTFS'"
     [[ "$CT_CORES" =~ ^[0-9]+$ ]] || die "--cores muss eine Zahl sein: '$CT_CORES'"
     [[ "$CT_MEMORY" =~ ^[0-9]+$ ]] || die "--memory muss eine Zahl sein: '$CT_MEMORY'"
+    if [[ -n "$DORF_LOD2" ]]; then
+        [[ -d "$DORF_LOD2" ]] || die "--lod2: Verzeichnis '$DORF_LOD2' nicht gefunden"
+        if ! ls "$DORF_LOD2"/*.gml >/dev/null 2>&1; then
+            die "--lod2: keine .gml-Dateien in '$DORF_LOD2'"
+        fi
+    fi
 }
 
 usage() {
@@ -232,6 +240,9 @@ Dorf-Optionen (wirken auf --dorf / --zip / --bbox):
   --title TEXT        Kartentitel (Default: aufgelöster Ortsname)
   --subtitle TEXT     Untertitel (Default: leer)
   --attribution TEXT  Quellen-Hinweis (Pflicht bei echten Daten, ist vorbelegt)
+  --lod2 DIR          Verzeichnis mit LoD2-CityGML (.gml) für echte Dächer
+                      (z. B. LGL BW / LDBV Bayern Open Data, im Container via
+                      build_lod2.py zu OSM-Gebäuden zugeordnet)
 
 Container-Optionen:
   --id NUM            Container-ID (Default: automatisch nächste freie ab 200)
@@ -879,9 +890,29 @@ PYCHECK
     fi
     python3 tools/build_scene.py "${BUILD_ARGS[@]}"
 
-    step "4/4 Boden malen + LoD2-Stub"
+    step "4/4 Boden malen"
     python3 tools/stylize_ground.py
-    [[ -f web/data/lod2.js ]] || echo 'window.LOD2={b:[]};' > web/data/lod2.js
+
+    step "LoD2-Dächer"
+    if [[ "${DT_LOD2_TAR:-0}" == "1" && -f /root/lod2.tar.gz ]]; then
+        mkdir -p data/lod2
+        tar -xzf /root/lod2.tar.gz -C data/lod2 --strip-components=1
+        local gml_count
+        gml_count=$( { find data/lod2 -maxdepth 1 -name '*.gml' 2>/dev/null || true; } | wc -l )
+        if [[ "${gml_count:-0}" -eq 0 ]]; then
+            echo "WARNUNG: Archiv enthält keine .gml – LoD2 übersprungen (Stub gesetzt)"
+            echo 'window.LOD2={b:[]};' > web/data/lod2.js
+        else
+            echo "$gml_count .gml-Dateien gefunden – Dächer werden gebaut (kann dauern)..."
+            # Fehler hier laut weiterreichen: der Nutzer will LoD2 explizit
+            python3 tools/build_lod2.py
+            [[ -s web/data/lod2.js ]] || { echo "FEHLER: build_lod2 hat keine lod2.js erzeugt"; exit 1; }
+            echo "LoD2 fertig: $(ls -la web/data/lod2.js | awk '{print $5}') Bytes"
+        fi
+        rm -f /root/lod2.tar.gz
+    else
+        echo 'window.LOD2={b:[]};' > web/data/lod2.js
+    fi
 
     # Verifikation vor dem Deployment
     local f missing=""
@@ -997,7 +1028,16 @@ build_dorf() {
     local ct_id="$1" name="$2"
     header "🏘️ Baue Dorf '${name:-PLZ $DORF_ZIP}' (OSM + Höhen + Luftbild – kann einige Minuten dauern)"
 
+    # LoD2-Material (CityGML) vom Host in den Container bringen
+    if [[ -n "$DORF_LOD2" ]]; then
+        info "LoD2-CityGML aus $DORF_LOD2 in den Container übertragen..."
+        tar -czf "$TMP_DIR/lod2.tar.gz" -C "$(dirname "$DORF_LOD2")" "$(basename "$DORF_LOD2")"
+        pct push "$ct_id" "$TMP_DIR/lod2.tar.gz" /root/lod2.tar.gz
+        info "$(ls "$DORF_LOD2"/*.gml | wc -l) .gml-Dateien übergeben"
+    fi
+
     run_inner "$ct_id" \
+        DT_LOD2_TAR="$([[ -n "$DORF_LOD2" ]] && echo 1 || echo 0)" \
         DT_DORF_RADIUS="$DORF_RADIUS" \
         DT_DORF_ZIP="$DORF_ZIP" \
         DT_DORF_COUNTRY="$DORF_COUNTRY" \
@@ -1021,7 +1061,8 @@ build_dorf() {
             2>/dev/null || true)
     fi
     info "Verifiziere Dorf-URLs im Container (/${slug}/)..."
-    for path in "/${slug}/index.html" "/${slug}/karte.html" "/${slug}/data/scene/meta.json"; do
+    for path in "/${slug}/index.html" "/${slug}/karte.html" "/${slug}/data/scene/meta.json" \
+                $( [[ -n "$DORF_LOD2" ]] && echo "/${slug}/data/lod2.js" ); do
         code=$(pct exec "$ct_id" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${WEB_PORT}${path}" 2>/dev/null || true)
         if [[ "$code" =~ ^[0-9]{3}$ && "$code" != "000" ]]; then
             ok "HTTP $code: $path"
