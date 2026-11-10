@@ -814,11 +814,22 @@ build_village() {
     cd "$WS"
 
     step "1/4 OSM-Daten laden (Overpass)${DT_DORF_ZIP:+, PLZ ${DT_DORF_ZIP}}"
-    if [[ -n "${DT_DORF_BBOX:-}" ]]; then
-        python3 tools/fetch_osm.py --bbox "$DT_DORF_BBOX" --radius "${DT_DORF_RADIUS:-1500}"
-    else
-        python3 tools/fetch_osm.py --name "$NAME" --zip "${DT_DORF_ZIP:-}" \
-            --country "${DT_DORF_COUNTRY:-de}" --radius "${DT_DORF_RADIUS:-1500}"
+    # Overpass ist flaky (Quota/Timeouts) – deshalb bis zu 3 Versuche mit Pause
+    local osm_ok=0 osm_try
+    for osm_try in 1 2 3; do
+        if [[ -n "${DT_DORF_BBOX:-}" ]]; then
+            if python3 tools/fetch_osm.py --bbox "$DT_DORF_BBOX" --radius "${DT_DORF_RADIUS:-1500}"; then osm_ok=1; break; fi
+        else
+            if python3 tools/fetch_osm.py --name "$NAME" --zip "${DT_DORF_ZIP:-}" \
+                --country "${DT_DORF_COUNTRY:-de}" --radius "${DT_DORF_RADIUS:-1500}"; then osm_ok=1; break; fi
+        fi
+        echo "Versuch ${osm_try}/3 fehlgeschlagen – Overpass-Endpunkte beschäftigt? Warte 20 s..."
+        sleep 20
+    done
+    if [[ "$osm_ok" != "1" ]]; then
+        echo "FEHLER: OSM-Laden nach 3 Versuchen fehlgeschlagen (Overpass-Quota/Netz)."
+        echo "Später erneut ausführen: dieses Script mit --dorf/--zip für dasselbe Dorf."
+        exit 1
     fi
     [[ -f web/data/bbox.json ]] || { echo "FEHLER: fetch_osm hat keine bbox.json erzeugt"; exit 1; }
 
