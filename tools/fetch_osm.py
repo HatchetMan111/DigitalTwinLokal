@@ -116,17 +116,54 @@ def overpass(query):
     raise SystemExit("Alle Overpass-Endpunkte fehlgeschlagen: %s" % last)
 
 
-def geocode(name):
-    hits = http_json("https://nominatim.openstreetmap.org/search",
-                     {"q": name, "format": "json", "limit": 1})
-    if not hits:
-        raise SystemExit("Ort nicht gefunden: %r (bitte --lat/--lon angeben)" % name)
-    return float(hits[0]["lat"]), float(hits[0]["lon"]), hits[0].get("display_name", "")
+def geocode(name, zipcode="", country="de"):
+    """Ortssuche mit PLZ-Unterstützung.
+
+    Ortsnamen sind mehrdeutig (viele Dörfer heißen gleich) – mit Postleitzahl
+    greift die Suche eindeutig. Versucht werden der Reihe nach:
+    Name+PLZ (strukturiert), Name+PLZ (frei), nur PLZ, nur Name.
+    """
+    base = "https://nominatim.openstreetmap.org/search"
+    attempts = []
+    if name and zipcode:
+        attempts.append(("Name+PLZ", {"city": name, "postalcode": zipcode,
+                                      "countrycodes": country}))
+        attempts.append(("Name+PLZ (frei)", {"q": "%s, %s" % (name, zipcode),
+                                             "countrycodes": country}))
+    if zipcode:
+        attempts.append(("nur PLZ", {"postalcode": zipcode, "countrycodes": country}))
+    if name:
+        attempts.append(("nur Name", {"q": name}))
+    if not attempts:
+        raise SystemExit("Ortssuche: weder Name noch PLZ angegeben")
+
+    last_label = ""
+    for label, params in attempts:
+        # Nominatim-Nutzungsregeln: max. ~1 Anfrage/s zwischen Versuchen
+        if last_label:
+            time.sleep(1.1)
+        p = dict(params, format="json", limit=1)
+        try:
+            hits = http_json(base, p)
+        except Exception as e:
+            print("Geokodierung (%s) fehlgeschlagen: %s" % (label, e), file=sys.stderr)
+            hits = None
+        last_label = label
+        if hits:
+            print("Ortssuche: Treffer über %s" % label)
+            return float(hits[0]["lat"]), float(hits[0]["lon"]), \
+                hits[0].get("display_name", "")
+        print("Ortssuche (%s): kein Treffer" % label, file=sys.stderr)
+    raise SystemExit(
+        "Ort nicht gefunden (zuletzt versucht: %s; Name=%r PLZ=%r) – bitte "
+        "Schreibweise prüfen oder --bbox/--lat/--lon angeben" % (last_label, name, zipcode))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", default="")
+    ap.add_argument("--zip", default="", help="Postleitzahl – macht die Ortssuche eindeutig")
+    ap.add_argument("--country", default="de", help="Ländercode für die PLZ-Suche (Default: de)")
     ap.add_argument("--lat", type=float)
     ap.add_argument("--lon", type=float)
     ap.add_argument("--radius", type=float, default=1500, help="Halbbreite in Metern")
@@ -134,14 +171,22 @@ def main():
     ap.add_argument("--out", default=OUT)
     args = ap.parse_args()
 
+    place = ""
     if args.bbox:
         w, s, e, n = [float(x) for x in args.bbox.split(",")]
         clat, clon = (s + n) / 2, (w + e) / 2
     else:
         if args.lat is None or args.lon is None:
-            if not args.name:
-                raise SystemExit("--name oder --bbox oder --lat/--lon angeben")
-            args.lat, args.lon, disp = geocode(args.name)
+            if not args.name and not args.zip:
+                raise SystemExit("--name oder --zip oder --bbox oder --lat/--lon angeben")
+            args.lat, args.lon, disp = geocode(args.name, args.zip, args.country)
+            # Ortsteil aus display_name: erstes Stück, das nicht die PLZ selbst ist
+            # (bei PLZ-only-Suche beginnt der Name z. B. mit "82405, Wessobrunn, …")
+            for _part in disp.split(","):
+                _part = _part.strip()
+                if _part and not _part.isdigit() and _part != args.zip.strip():
+                    place = _part
+                    break
             print("Geokodiert:", disp)
         clat, clon = args.lat, args.lon
         dlat = args.radius / 110574.0
@@ -263,7 +308,8 @@ def main():
         f.write("window.PLACES=" + json.dumps(places, ensure_ascii=False, separators=(",", ":")) + ";")
     with open(os.path.join(args.out, "bbox.json"), "w") as f:
         json.dump({"w": w, "s": s, "e": e, "n": n, "center_lat": clat, "center_lon": clon,
-                   "radius": args.radius, "name": args.name}, f, indent=2)
+                   "radius": args.radius, "name": args.name, "place": place,
+                   "zip": args.zip}, f, indent=2)
 
     print("Gebäude: %d  Straßen: %d  Orte: %d" % (len(buildings), len(roads), len(places)))
     print("mit Straßenzuordnung:", sum(1 for b in buildings if b["properties"]["street"]))

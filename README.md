@@ -66,11 +66,11 @@ systemd-Service, Demo-Dorf sofort live):
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/DigitalTwinLokal/main/install/digitaltwinlokal.sh)"
 ```
 
-Der Installer **fragt interaktiv nach dem Gebiet** (Dorf-/Ortsname + Radius, leer
-= nur Demo). Wer es scriptgesteuert bevorzugt, übergibt das Gebiet direkt per
-Flag — beide Wege enden im gleichen Ergebnis: Nach dem Bau ist das Dorf im
-Dorfregal als **3D- und 2D-Karte** erreichbar, vollautomatisch aus offenen
-Geodaten gebaut.
+Der Installer **fragt interaktiv nach dem Gebiet** (Dorf-/Ortsname +
+**Postleitzahl** + Radius, alles leer = nur Demo). Wer es scriptgesteuert
+bevorzugt, übergibt das Gebiet direkt per Flag — beide Wege enden im gleichen
+Ergebnis: Nach dem Bau ist das Dorf im Dorfregal als **3D- und 2D-Karte**
+erreichbar, vollautomatisch aus offenen Geodaten gebaut.
 
 Danach gilt: `http://<CT-IP>:8000/` = **Dorfregal** (Übersicht aller Dörfer) und
 je Dorf `<dorf>/` = 3D-Ansicht, `<dorf>/karte.html` = **2D-Karte**. Im Heimnetz
@@ -81,8 +81,9 @@ kann jedes Gerät von oben aufs Dorf schauen – komplett lokal, ohne Cloud.
 | Befehl (auf dem Proxmox-Host) | Was passiert |
 |---|---|
 | *(Einzeiler oben)* | CT erstellen + Demo-Dorf „Musterhausen“ hosten |
-| `…digitaltwinlokal.sh --dorf "Dein Dorf"` | **Echtes Heimatdorf vollautomatisch erstellen**: OSM-Gebäude/Straßen (Overpass), Höhenmodell (AWS-Terrarium-Kacheln z13), Luftbild (Esri World Imagery z16), gemalter Boden – landet direkt im Dorfregal |
-| `… --dorf "Dein Dorf" --radius 2000` | Größerer Ausschnitt; `--bbox w,s,e,n` wählt die Region exakt |
+| `…digitaltwinlokal.sh --dorf "Dein Dorf" --zip 82405` | **Echtes Heimatdorf vollautomatisch erstellen**: OSM-Gebäude/Straßen (Overpass), Höhenmodell (AWS-Terrarium-Kacheln z13), Luftbild (Esri World Imagery z16), gemalter Boden – landet direkt im Dorfregal. Die **PLZ macht die Ortssuche eindeutig** (viele Dörfer heißen gleich) und löst den Ortsnamen automatisch auf |
+| `… --zip 82405` | Nur per PLZ: der Ortsname wird bei der Ortssuche automatisch ermittelt |
+| `… --dorf "Dein Dorf" --zip 82405 --radius 2000` | Größerer Ausschnitt; `--bbox w,s,e,n` wählt die Region exakt |
 | `… --dorf "Nachbardorf"` | Weitere Dörfer hinzufügen (beliebig oft, alles im Regal) |
 | `… --list` | Gehostete Dörfer mit URLs auflisten |
 | `… --export "Dein Dorf" --out /root/dorf.tar.gz` | Dorf als tar.gz auf den Host sichern |
@@ -92,8 +93,9 @@ kann jedes Gerät von oben aufs Dorf schauen – komplett lokal, ohne Cloud.
 | `… --uninstall` | Container vollständig entfernen |
 
 Container-Feinsteuerung: `--id`, `--hostname`, `--storage`, `--rootfs`, `--cores`,
-`--memory`, `--ip`, `--port`, `--tiles` (eigene Kachelquelle, z. B. Bayern-Orthofotos),
-`--z`, `--title`, `--subtitle`, `--attribution`, `--debug` (vollständiges `bash -x`-Log).
+`--memory`, `--ip`, `--port`, `--zip` (PLZ für eindeutige Ortssuche),
+`--country` (ISO-Code für PLZ-Suche, Default de), `--tiles` (eigene Kachelquelle,
+z. B. Bayern-Orthofotos), `--z`, `--title`, `--subtitle`, `--attribution`, `--debug` (vollständiges `bash -x`-Log).
 Bei Fehlern gibt das Script die komplette Fehlerkette inkl. Container-Logs aus;
 ein vollständiges Installationslog liegt unter `/tmp/digitaltwin-installer-*.log`.
 

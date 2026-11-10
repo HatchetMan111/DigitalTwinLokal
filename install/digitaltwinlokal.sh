@@ -45,6 +45,8 @@ CT_TEMPLATE=""
 
 # Dorf-Bau-Parameter (für --dorf; mehrere --dorf-Flags möglich)
 DORFS=()                   # Array der Dorfnamen aus --dorf
+DORF_ZIP=""                # Postleitzahl – macht die Ortssuche eindeutig
+DORF_COUNTRY="de"          # ISO-Ländercode für die PLZ-Suche
 DORF_RADIUS=1500           # Halbbreite in Metern
 DORF_BBOX=""               # optional w,s,e,n statt Ortsname
 ORTHO_TILES="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -143,6 +145,8 @@ parse_args() {
             --template)       CT_TEMPLATE="${args[1]}"; args=("${args[@]:2}") ;;
             --port)           WEB_PORT="${args[1]}"; args=("${args[@]:2}") ;;
             --dorf)           DORFS+=("${args[1]}"); args=("${args[@]:2}") ;;
+            --zip)            DORF_ZIP="${args[1]}"; args=("${args[@]:2}") ;;
+            --country)        DORF_COUNTRY="${args[1]}"; args=("${args[@]:2}") ;;
             --radius)         DORF_RADIUS="${args[1]}"; args=("${args[@]:2}") ;;
             --bbox)           DORF_BBOX="${args[1]}"; args=("${args[@]:2}") ;;
             --tiles)          ORTHO_TILES="${args[1]}"; args=("${args[@]:2}") ;;
@@ -195,25 +199,30 @@ Usage:
 Use Cases:
   1) Installieren + Demo ansehen (Standard):
        ${ONE_LINER}
+     Ohne Flags fragt der Installer interaktiv nach Ort + PLZ + Radius.
   2) Eigenes Heimatdorf vollautomatisch erstellen (OSM + Höhen + Luftbild):
-       ${ONE_LINER} --dorf "Dein Dorf"
-       ${ONE_LINER} --dorf "Dein Dorf" --radius 2000
+       ${ONE_LINER} --dorf "Dein Dorf" --zip 82405
+       ${ONE_LINER} --dorf "Dein Dorf" --zip 82405 --radius 2000
+       ${ONE_LINER} --zip 82405            (Ortsname wird aus der PLZ aufgelöst)
        ${ONE_LINER} --bbox 11.49,48.09,11.54,48.13 --title "Mein Gebiet"
+     Die PLZ macht die Ortssuche eindeutig (viele Dörfer heißen gleich).
   3) Weitere Dörfer hinzufügen (mehrfach aufrufbar, landen im Dorfregal):
-       ${ONE_LINER} --dorf "Nachbardorf"
+       ${ONE_LINER} --dorf "Nachbardorf" --zip 869xx
   4) 2D-Karte je Dorf: http://<IP>:${WEB_PORT}/<dorf>/karte.html
   5) Dorf exportieren (Backup auf den Host):
        ${ONE_LINER} --export "Dein Dorf" --out /root/mein-dorf.tar.gz
   6) Dorf entfernen / auflisten / aktualisieren / entfernen:
        ${ONE_LINER} --remove-dorf "Dein Dorf" | --list | --update | --uninstall
 
-Dorf-Optionen (wirken auf --dorf / --bbox):
+Dorf-Optionen (wirken auf --dorf / --zip / --bbox):
+  --zip PLZ           Postleitzahl – macht die Ortssuche eindeutig (Default: de)
+  --country CODE      ISO-Ländercode für die PLZ-Suche (Default: de)
   --radius NUM        Halbbreite in Metern (Default: 1500)
-  --bbox w,s,e,n      Bbox in Lon/Lat statt Ortsnamen-Suche
+  --bbox w,s,e,n      Bbox in Lon/Lat statt Ortssuche
   --tiles URL         XYZ-Template fürs Luftbild
                       (Default: Esri World Imagery, {z}/{y}/{x}-Reihenfolge ok)
   --z NUM             Kachel-Zoomstufe fürs Luftbild (Default: 16)
-  --title TEXT        Kartentitel (Default: Ortsname)
+  --title TEXT        Kartentitel (Default: aufgelöster Ortsname)
   --subtitle TEXT     Untertitel (Default: leer)
   --attribution TEXT  Quellen-Hinweis (Pflicht bei echten Daten, ist vorbelegt)
 
@@ -781,21 +790,19 @@ cmd_app() {
 
 build_village() {
     local NAME="$1"
-    if [[ -z "$NAME" ]]; then
-        echo "FEHLER: Dorfname fehlt (village NAME)"
+    if [[ -z "$NAME" && -z "${DT_DORF_ZIP:-}" && -z "${DT_DORF_BBOX:-}" ]]; then
+        echo "FEHLER: weder Dorfname noch PLZ/Bbox angegeben (village NAME)"
         exit 1
     fi
-    local SLUG
-    SLUG=$(slugify "$NAME")
 
     if [[ ! -d "$REPO_DIR/web" ]]; then
         echo "App-Repo fehlt – rufe zuerst 'app' auf"
         cmd_app
     fi
 
-    step "Dorf '$NAME' bauen (Slug: $SLUG)"
-
-    local WS="$SERVE_DIR/.build/$SLUG"
+    # Fester Arbeitsbereich – der finale Slug steht erst NACH der Ortssuche fest
+    # (bei PLZ-only löst fetch_osm erst den Ortsnamen auf)
+    local WS="$SERVE_DIR/.build/current"
     rm -rf "$WS"
     mkdir -p "$WS/web" "$WS/srtm13"
 
@@ -806,11 +813,12 @@ build_village() {
     cp -a "$REPO_DIR/tools" "$WS/tools"
     cd "$WS"
 
-    step "1/4 OSM-Daten laden (Overpass)"
+    step "1/4 OSM-Daten laden (Overpass)${DT_DORF_ZIP:+, PLZ ${DT_DORF_ZIP}}"
     if [[ -n "${DT_DORF_BBOX:-}" ]]; then
         python3 tools/fetch_osm.py --bbox "$DT_DORF_BBOX" --radius "${DT_DORF_RADIUS:-1500}"
     else
-        python3 tools/fetch_osm.py --name "$NAME" --radius "${DT_DORF_RADIUS:-1500}"
+        python3 tools/fetch_osm.py --name "$NAME" --zip "${DT_DORF_ZIP:-}" \
+            --country "${DT_DORF_COUNTRY:-de}" --radius "${DT_DORF_RADIUS:-1500}"
     fi
     [[ -f web/data/bbox.json ]] || { echo "FEHLER: fetch_osm hat keine bbox.json erzeugt"; exit 1; }
 
@@ -821,16 +829,25 @@ with open("web/data/buildings.js") as f:
 n = len(d.get("features", []))
 print("Gebäude im Ausschnitt:", n)
 if n == 0:
-    print("FEHLER: Keine Gebäude in diesem Ausschnitt – Ort/Bbox prüfen.")
+    print("FEHLER: Keine Gebäude in diesem Ausschnitt – Ort/Bbox/PLZ prüfen.")
     raise SystemExit(1)
 PYCHECK
+
+    # Aufgelösten Ortsnamen für Titel + Slug nutzen (PLZ-only → echter Name)
+    local PLACE TITLE_BASE SLUG
+    PLACE=$(python3 -c "import json;print(json.load(open('web/data/bbox.json')).get('place','') or '')")
+    TITLE_BASE="$NAME"
+    [[ -z "$TITLE_BASE" ]] && TITLE_BASE="$PLACE"
+    [[ -z "$TITLE_BASE" ]] && TITLE_BASE="${DT_DORF_ZIP:-dorf}"
+    SLUG=$(slugify "$TITLE_BASE")
+    step "Dorf '$TITLE_BASE' aufgelöst (Slug: $SLUG) – installiere nach Abschluss"
 
     step "2/4 Höhenkacheln laden (Terrarium z13)"
     python3 tools/fetch_srtm.py --out srtm13
 
     step "3/4 Szene bauen (Luftbild + Höhenraster + meta.json)"
     local BUILD_ARGS=(--tiles "${DT_ORTHO_TILES}" --z "${DT_ORTHO_Z:-16}" --srtm-dir srtm13
-        --title "${DT_DORF_TITLE:-$NAME}" --attribution "${DT_DORF_ATTRIBUTION}")
+        --title "${DT_DORF_TITLE:-$TITLE_BASE}" --attribution "${DT_DORF_ATTRIBUTION}")
     if [[ -n "${DT_DORF_SUBTITLE:-}" ]]; then
         BUILD_ARGS+=(--subtitle "$DT_DORF_SUBTITLE")
     fi
@@ -866,6 +883,7 @@ PYCHECK
 
     echo ""
     echo "━━━ [setup] Dorf fertig: http://localhost:${WEB_PORT}/${SLUG}/ (3D) · /${SLUG}/karte.html (2D) ━━━"
+    echo "━━━ [setup] Später referenzieren als: '$TITLE_BASE' (--remove-dorf/--export) ━━━"
 }
 
 cmd_remove_village() {
@@ -955,10 +973,12 @@ run_inner() {
 # ── Eigenes Dorf bauen (von install + --dorf genutzt) ──────────────────────
 build_dorf() {
     local ct_id="$1" name="$2"
-    header "🏘️ Baue Dorf '$name' (OSM + Höhen + Luftbild – kann einige Minuten dauern)"
+    header "🏘️ Baue Dorf '${name:-PLZ $DORF_ZIP}' (OSM + Höhen + Luftbild – kann einige Minuten dauern)"
 
     run_inner "$ct_id" \
         DT_DORF_RADIUS="$DORF_RADIUS" \
+        DT_DORF_ZIP="$DORF_ZIP" \
+        DT_DORF_COUNTRY="$DORF_COUNTRY" \
         DT_DORF_BBOX="$DORF_BBOX" \
         DT_ORTHO_TILES="$ORTHO_TILES" \
         DT_ORTHO_Z="$ORTHO_Z" \
@@ -967,9 +987,11 @@ build_dorf() {
         DT_DORF_ATTRIBUTION="$DORF_ATTRIBUTION" \
         bash /root/dt-setup.sh village "$name"
 
-    # Verifikation: Dorf + meta.json erreichbar (Slug gespiegelt vom Inner-Script)
+    # Verifikation: Dorf + meta.json erreichbar. Slug-Spiegelung vom Inner-Script:
+    # der finale Slug basiert auf dem aufgelösten Ortsnamen (PLZ-only → echter
+    # Name aus der Ortssuche), deshalb zusätzlich die Registry abfragen.
     local slug code
-    slug=$(host_slugify "$name")
+    slug=$(host_slugify "${name:-$DORF_ZIP}")
     info "Verifiziere Dorf-URLs im Container (/${slug}/)..."
     for path in "/${slug}/index.html" "/${slug}/karte.html" "/${slug}/data/scene/meta.json"; do
         code=$(pct exec "$ct_id" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${WEB_PORT}${path}" 2>/dev/null || true)
@@ -1123,7 +1145,7 @@ create_container() {
 # ── Interaktive Gebiets-Frage (wenn kein --dorf angegeben wurde) ───────────
 ask_for_area() {
     # Nur fragen, wenn installiert werden soll und nichts vorgegeben ist
-    if [[ ${#DORFS[@]} -gt 0 || -n "$DORF_BBOX" || "$ASSUME_YES" == true \
+    if [[ ${#DORFS[@]} -gt 0 || -n "$DORF_BBOX" || -n "$DORF_ZIP" || "$ASSUME_YES" == true \
           || "$UPDATE" == true || "$UNINSTALL" == true || "$STATUS_CHECK" == true \
           || "$LIST_ONLY" == true || -n "$EXPORT_SLUG" || -n "$REMOVE_DORF" ]]; then
         return 0
@@ -1137,11 +1159,22 @@ ask_for_area() {
     echo -e "  Du kannst jetzt direkt dein ${BOLD}Heimatdorf${NC} bauen lassen"
     echo -e "  (OSM-Gebäude/Straßen + Höhenmodell + Luftbild – alles automatisch, alles lokal):"
     echo ""
-    local reply_name reply_radius
+    local reply_name reply_zip reply_radius
     read -r -p "  Dorf- oder Ortsname (leer = nur Demo-Dorf installieren): " reply_name || reply_name=""
     if [[ -z "$reply_name" ]]; then
-        info "Nur Demo installieren – Dörfer später hinzufügen mit:  --dorf \"Dein Dorf\""
-        return 0
+        # Auch PLZ-only erlauben: eindeutig + löst den Ortsnamen automatisch auf
+        read -r -p "  Postleitzahl des Ortes (Enter = Abbrechen, nur Demo): " reply_zip || reply_zip=""
+        if [[ -z "$reply_zip" ]]; then
+            info "Nur Demo installieren – Dörfer später hinzufügen mit:  --dorf \"Dein Dorf\""
+            return 0
+        fi
+    else
+        read -r -p "  Postleitzahl des Ortes (empfohlen, gegen Namens-Doppelungen): " reply_zip || reply_zip=""
+    fi
+    reply_zip="${reply_zip// /}"
+    if [[ -n "$reply_zip" && ! "$reply_zip" =~ ^[0-9]{3,10}$ ]]; then
+        warn "PLZ '$reply_zip' sieht nicht nach einer Postleitzahl aus – ignoriere sie"
+        reply_zip=""
     fi
     read -r -p "  Halbbreite des Ausschnitts in Metern [1500]: " reply_radius || reply_radius="1500"
     if ! [[ "$reply_radius" =~ ^[0-9]+$ ]]; then
@@ -1149,8 +1182,12 @@ ask_for_area() {
         reply_radius=1500
     fi
     DORF_RADIUS="$reply_radius"
+    DORF_ZIP="$reply_zip"
+    if [[ -z "$reply_name" ]]; then
+        info "PLZ $DORF_ZIP wird beim Bau automatisch zum Ortsnamen aufgelöst."
+    fi
     DORFS+=("$reply_name")
-    ok "Gebiet '$reply_name' (±${DORF_RADIUS} m) wird nach der Installation gebaut."
+    ok "Gebiet '${reply_name:-PLZ $DORF_ZIP}' (±${DORF_RADIUS} m) wird nach der Installation gebaut."
     info "Titel/Attribution/Quelle per --title/--attribution/--tiles feinjustierbar (--help)."
     return 0
 }
