@@ -178,6 +178,13 @@ parse_args() {
         die "--remove-dorf und --export können nicht kombiniert werden"
     fi
 
+    # --zip ohne --dorf: PLZ-only-Dorf mit leerem Namen anfordern – der
+    # Container löst den Ortsnamen aus der PLZ auf (Slug/Titel folgen dann
+    # dem echten Ortsnamen, nicht der Nummer).
+    if [[ ${#DORFS[@]} -eq 0 && -n "$DORF_ZIP" ]]; then
+        DORFS+=("")
+    fi
+
     # Numerische Eingaben validieren, bevor sie im Container landen
     [[ "$DORF_RADIUS" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "--radius muss eine Zahl sein (Meter): '$DORF_RADIUS'"
     [[ "$ORTHO_Z" =~ ^[0-9]+$ && "$ORTHO_Z" -ge 1 && "$ORTHO_Z" -le 19 ]] || die "--z muss eine Zahl 1–19 sein: '$ORTHO_Z'"
@@ -998,11 +1005,17 @@ build_dorf() {
         DT_DORF_ATTRIBUTION="$DORF_ATTRIBUTION" \
         bash /root/dt-setup.sh village "$name"
 
-    # Verifikation: Dorf + meta.json erreichbar. Slug-Spiegelung vom Inner-Script:
-    # der finale Slug basiert auf dem aufgelösten Ortsnamen (PLZ-only → echter
-    # Name aus der Ortssuche), deshalb zusätzlich die Registry abfragen.
+    # Verifikation: Dorf + meta.json erreichbar. Der finale Slug basiert auf
+    # dem aufgelösten Ortsnamen (PLZ-only → echter Name aus der Ortssuche),
+    # deshalb bei leerem Namen den letzten Registry-Eintrag lesen.
     local slug code
-    slug=$(host_slugify "${name:-$DORF_ZIP}")
+    if [[ -n "$name" ]]; then
+        slug=$(host_slugify "$name")
+    else
+        slug=$(pct exec "$ct_id" -- python3 -c \
+            "import json;d=json.load(open('/srv/digitaltwin/villages.json'))['villages'];print(d[-1] if d else '')" \
+            2>/dev/null || true)
+    fi
     info "Verifiziere Dorf-URLs im Container (/${slug}/)..."
     for path in "/${slug}/index.html" "/${slug}/karte.html" "/${slug}/data/scene/meta.json"; do
         code=$(pct exec "$ct_id" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${WEB_PORT}${path}" 2>/dev/null || true)
