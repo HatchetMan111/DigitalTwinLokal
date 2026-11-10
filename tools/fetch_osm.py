@@ -116,6 +116,13 @@ def overpass(query):
     raise SystemExit("Alle Overpass-Endpunkte fehlgeschlagen: %s" % last)
 
 
+def approx_m(lat1, lon1, lat2, lon2):
+    """Grobe Distanz in Metern (equirektangular, reicht für Plausibilität)."""
+    dy = (lat2 - lat1) * 110574.0
+    dx = (lon2 - lon1) * 111320.0 * math.cos(math.radians((lat1 + lat2) / 2))
+    return math.hypot(dx, dy)
+
+
 def geocode(name, zipcode="", country="de"):
     """Ortssuche mit PLZ-Unterstützung.
 
@@ -188,6 +195,19 @@ def main():
                     place = _part
                     break
             print("Geokodiert:", disp)
+
+            # Verfeinerung: Die PLZ-Suche trifft oft die Mitte des Postgebiets
+            # (Feld/Wald zwischen den Orten), nicht den Ortskern – dann stehen
+            # am Ende fast nur Bäume in der Karte. Mit dem aufgelösten Ortsnamen
+            # nochmal gezielt auf den Ort selbst zielen (max. 15 km Drift okay).
+            if place and place.lower() != args.name.strip().lower():
+                try:
+                    lat2, lon2, disp2 = geocode(place, "", args.country)
+                except SystemExit:
+                    lat2, lon2, disp2 = None, None, ""
+                if lat2 is not None and approx_m(args.lat, args.lon, lat2, lon2) < 15000:
+                    print("Ortsmitte verfeinert:", disp2)
+                    args.lat, args.lon = lat2, lon2
         clat, clon = args.lat, args.lon
         dlat = args.radius / 110574.0
         dlon = args.radius / (111320.0 * math.cos(math.radians(clat)))

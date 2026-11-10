@@ -849,6 +849,10 @@ print("Gebäude im Ausschnitt:", n)
 if n == 0:
     print("FEHLER: Keine Gebäude in diesem Ausschnitt – Ort/Bbox/PLZ prüfen.")
     raise SystemExit(1)
+if n < 40:
+    print("HINWEIS: Wenige Gebäude im Ausschnitt – die Ortssuche könnte auf")
+    print("eine Fläche/Wald statt auf den Ortskern gezielt haben. Tipp:")
+    print("Ortsname + PLZ zusammen angeben oder --radius erhöhen.")
 PYCHECK
 
     # Aufgelösten Ortsnamen für Titel + Slug nutzen (PLZ-only → echter Name)
